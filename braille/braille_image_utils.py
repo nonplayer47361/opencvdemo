@@ -1,20 +1,17 @@
 import json
 import numpy as np
 import cv2
-import re
 from concurrent.futures import ThreadPoolExecutor
+from braille.braille_translator import parse_to_braille_cells  # 반드시 풀스펙 매핑 테이블에 의존하는 braille_translator 사용!
 from datetime import datetime
 import os
-
-# 표준 점자 테이블 import (풀스펙)
-from braille.braille_table import (
-    INITIAL_TO_BRAILLE, MEDIAL_TO_BRAILLE, FINAL_TO_BRAILLE,
-    ENGLISH_TO_BRAILLE, CAPITAL_PREFIX, NUMBER_PREFIX, NUM_TO_BRAILLE_LETTER,
-    HANGUL_BRAILLE_ABBREVIATION, SPECIAL_TO_BRAILLE
-)
-from braille.braille_translator import parse_to_braille_cells
+import re
+from typing import Tuple, Any
 
 def sanitize_filename(text: str, prefix: str = "braille") -> str:
+    """
+    텍스트를 안전한 파일명으로 변환
+    """
     safe_text = re.sub(r'[^가-힣a-zA-Z0-9]', '_', text)
     safe_text = safe_text.strip('_') or "braille"
     safe_text = safe_text[:30]
@@ -29,8 +26,11 @@ def draw_braille_cell(
     point_r: int,
     xgap: int,
     ygap: int,
-    dot_color=(0,0,0)
+    dot_color: Tuple[int, int, int] = (0,0,0)
 ) -> None:
+    """
+    6점 점자 셀을 이미지에 그림
+    """
     coords = [
         (0, 0), (0, 1), (0, 2),
         (1, 0), (1, 1), (1, 2)
@@ -48,7 +48,11 @@ def make_braille_image_and_saveinfo(
     max_cols: int = 20,
     save_dir: str = "data",
     n_workers: int = 4
-):
+) -> Tuple[str, np.ndarray, str, Any]:
+    """
+    텍스트 → 점자 셀 → 이미지, 변환 정보(json) 저장
+    Returns: (img_path, numpy_image, info_path, info_dict)
+    """
     mm2px = lambda mm: int(round(mm * dpi / 25.4))
     point_d_mm = 1.5
     point_r_px = max(mm2px(point_d_mm) // 2, 2)
@@ -72,7 +76,7 @@ def make_braille_image_and_saveinfo(
         col = k % max_cols
         x0 = cell_x_px * col + cell_x_px // 2 - xgap_px // 2
         y0 = cell_y_px * row + cell_y_px // 2 - ygap_px
-        draw_braille_cell(img, x0, y0, pattern, point_r_px, xgap_px, ygap_px)
+        draw_braille_cell(img, x0, y0, pattern, point_r_px, xgap_px, ygap_px, dot_color=(0,0,0))
 
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
         list(executor.map(draw_cell_worker, enumerate(braille_cells)))
@@ -95,9 +99,3 @@ def make_braille_image_and_saveinfo(
         json.dump(info, f, ensure_ascii=False, indent=2)
 
     return img_path, img, info_path, info
-
-if __name__ == "__main__":
-    text = input("변환할 텍스트 입력: ").strip()
-    img_path, img, info_path, info = make_braille_image_and_saveinfo(text)
-    print(f"[✔] 점자 이미지: {img_path}")
-    print(f"[✔] 변환 정보(JSON): {info_path}")

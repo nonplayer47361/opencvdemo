@@ -1,45 +1,56 @@
-"""
-Braille Web Demo 메인 진입점
-
-- CLI 및 웹 서버 등 확장 가능
-- 간단한 예시: 텍스트→점자 변환, 이미지 저장, 복원 결과 출력
-"""
-
-import sys
+from flask import Flask, request, jsonify, send_file
 import os
+from braille.braille_converter import make_braille_image, text_to_braille, decode_braille_image
+from werkzeug.utils import secure_filename
 
-# 점자 변환 함수 임포트 (구현체에 따라 아래 import 경로 확인 필요)
-from braille.text_to_braille_bits import make_braille_image_verbose, decode_image_to_text
+app = Flask(__name__)
+UPLOAD_FOLDER = './uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-def main():
-    print("=== Braille Web Demo ===")
-    print("1: 한글/숫자/특수/축약/음절→점자 이미지 생성")
-    print("2: 점자 이미지→텍스트 복원")
-    mode = input("모드 선택 (1/2): ").strip()
+@app.route("/api/text-to-braille-image", methods=["POST"])
+def api_text_to_braille_image():
+    data = request.json
+    text = data.get("text", "")
+    if not text:
+        return jsonify({"error": "텍스트 입력 필요"}), 400
+    img_path, cell_count = make_braille_image(text)
+    return send_file(img_path, mimetype="image/png")
 
-    if mode == "1":
-        text = input("변환할 텍스트 입력: ").strip()
-        path, cell_count = make_braille_image_verbose(text)
-        print(f"[✔] 점자 이미지 저장: {path} (셀 개수: {cell_count})")
-        # 추가: 이미지 직접 보기 등은 웹/GUI에서 구현 권장
-    elif mode == "2":
-        img_path = input("점자 이미지 경로 입력 (.png): ").strip()
-        if not os.path.isfile(img_path):
-            print("이미지 파일이 존재하지 않습니다.")
-            sys.exit(1)
-        # 셀 개수 정보 파일 읽기(선택)
-        len_path = img_path + ".len"
-        cell_count = None
-        if os.path.isfile(len_path):
-            with open(len_path, encoding="utf-8") as f:
-                cell_count = int(f.read().strip())
-        else:
-            cell_in = input("셀 개수(글자수×3, 엔터시 20): ").strip()
-            cell_count = int(cell_in) if cell_in.isdigit() else 20
-        result = decode_image_to_text(img_path, ncell=cell_count)
-        print(f"[복원 결과] {result}")
-    else:
-        print("잘못된 입력입니다.")
+@app.route("/api/text-to-braille-unicode", methods=["POST"])
+def api_text_to_braille_unicode():
+    data = request.json
+    text = data.get("text", "")
+    if not text:
+        return jsonify({"error": "텍스트 입력 필요"}), 400
+    braille_unicode = text_to_braille(text, use_unicode=True)
+    return jsonify({"braille_unicode": braille_unicode})
+
+@app.route('/api/braille-image-to-text', methods=['POST'])
+def api_braille_image_to_text():
+    if 'file' not in request.files:
+        return jsonify({"error": "이미지 파일 업로드 필요"}), 400
+    file = request.files['file']
+    filename = secure_filename(file.filename)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(file_path)
+    try:
+        text = decode_braille_image(file_path)
+        # 변환 정보 저장 (예: data/restore_20240527_000000.json)
+        import json
+        from datetime import datetime
+        os.makedirs("data", exist_ok=True)
+        info = {
+            "restored_text": text,
+            "input_image": filename,
+            "restored_at": datetime.now().isoformat()
+        }
+        info_filename = f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(os.path.join("data", info_filename), "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=2)
+        return jsonify({'text': text})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
-    main()
+    app.run(debug=True)

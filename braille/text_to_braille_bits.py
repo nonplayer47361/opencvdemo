@@ -1,95 +1,96 @@
+"""
+텍스트(한글/영문/숫자/특수/약자) → 점자 6비트 패턴/이미지 변환 (풀스펙 braille_table.py 연동)
+"""
+
 import hgtk
 import numpy as np
 import cv2
-
-# 표준 점자 테이블 import
-from braille.braille_table import (
-    INITIAL_TO_BRAILLE,
-    MEDIAL_TO_BRAILLE,
-    FINAL_TO_BRAILLE,
-    ENGLISH_TO_BRAILLE,
-    CAPITAL_PREFIX,
-    NUMBER_PREFIX,
-    NUM_TO_BRAILLE_LETTER,
-    HANGUL_BRAILLE_ABBREVIATION
+import re
+from .braille_table import (
+    INITIAL_TO_BRAILLE, MEDIAL_TO_BRAILLE, FINAL_TO_BRAILLE,
+    HANGUL_BRAILLE_ABBREVIATION, ENGLISH_TO_BRAILLE,
+    CAPITAL_PREFIX, NUMBER_PREFIX, NUM_TO_BRAILLE_LETTER,
+    SPECIAL_TO_BRAILLE
 )
 
-def decompose_syllable(char):
-    if not hgtk.checker.is_hangul(char):
-        return None, None, None
-    try:
-        cho, jung, jong = hgtk.letter.decompose(char)
-    except hgtk.exception.NotHangulException:
-        return None, None, None
-    return cho, jung, jong
-
-def get_braille_pattern(cho, jung, jong):
-    initial = INITIAL_TO_BRAILLE.get(cho, [0,0,0,0,0,0])
-    medial = MEDIAL_TO_BRAILLE.get(jung, [0,0,0,0,0,0])
-    finals = []
-    f = FINAL_TO_BRAILLE.get(jong)
-    if isinstance(f, list) and f and isinstance(f[0], list):
-        finals = f
-    elif jong in FINAL_TO_BRAILLE:
-        finals = [FINAL_TO_BRAILLE[jong]]
-    else:
-        finals = [[0,0,0,0,0,0]]
-    return [initial, medial] + finals
+def sanitize_filename(text):
+    filename = re.sub(r'[^가-힣a-zA-Z0-9]', '_', text).strip('_')
+    return filename[:30] + "_dot.png"
 
 def parse_to_braille_cells(text):
-    braille_cells = []
+    """텍스트를 점자 6비트 리스트(셀 단위) 시퀀스로 변환"""
+    cells = []
     i = 0
     while i < len(text):
         matched = False
-        # 약자(축약어) 먼저 검사
+        # 한글 약자(최장매칭)
         for key in sorted(HANGUL_BRAILLE_ABBREVIATION.keys(), key=len, reverse=True):
-            if text[i:i+len(key)] == key:
-                braille_cells.append(HANGUL_BRAILLE_ABBREVIATION[key])
+            if text.startswith(key, i):
+                bits = HANGUL_BRAILLE_ABBREVIATION[key]
+                # 약자값이 셀 2개 이상(겹/복합)인지 체크
+                if isinstance(bits[0], list):
+                    for b in bits:
+                        cells.append(list(b))
+                else:
+                    cells.append(list(bits))
                 i += len(key)
                 matched = True
                 break
         if matched:
             continue
         ch = text[i]
-        cho, jung, jong = decompose_syllable(ch)
-        if cho is not None:
-            patterns = get_braille_pattern(cho, jung, jong)
-            braille_cells.extend(patterns)
+        # 한글 음절
+        if hgtk.checker.is_hangul(ch):
+            try:
+                cho, jung, jong = hgtk.letter.decompose(ch)
+                cells.append(list(INITIAL_TO_BRAILLE.get(cho, [0]*6)))
+                cells.append(list(MEDIAL_TO_BRAILLE.get(jung, [0]*6)))
+                fin = FINAL_TO_BRAILLE.get(jong, [0]*6)
+                if isinstance(fin[0], list):  # 겹받침(2셀)
+                    for b in fin:
+                        cells.append(list(b))
+                else:
+                    cells.append(list(fin))
+            except Exception:
+                cells.append([0]*6)
             i += 1
             continue
+        # 영문자
         if ch.isalpha():
             if ch.isupper():
-                braille_cells.append(CAPITAL_PREFIX)
-            braille_cells.append(ENGLISH_TO_BRAILLE.get(ch.lower(), [0,0,0,0,0,0]))
+                cells.append(list(CAPITAL_PREFIX))
+            lower = ch.lower()
+            b = ENGLISH_TO_BRAILLE.get(lower, [0]*6)
+            cells.append(list(b))
             i += 1
             continue
+        # 숫자
         if ch.isdigit():
-            braille_cells.append(NUMBER_PREFIX)
+            cells.append(list(NUMBER_PREFIX))
             for digit in ch:
                 letter = NUM_TO_BRAILLE_LETTER[digit]
-                braille_cells.append(ENGLISH_TO_BRAILLE[letter])
+                b = ENGLISH_TO_BRAILLE.get(letter, [0]*6)
+                cells.append(list(b))
             i += 1
             continue
+        # 특수문자
+        if ch in SPECIAL_TO_BRAILLE:
+            b = SPECIAL_TO_BRAILLE[ch]
+            cells.append(list(b))
+            i += 1
+            continue
+        # 공백
         if ch.isspace():
-            braille_cells.append([0,0,0,0,0,0])  # 빈 셀(띄어쓰기)
-        else:
-            braille_cells.append([0,0,0,0,0,0])  # 미정의 문자는 빈 셀
+            cells.append([0]*6)
+            i += 1
+            continue
+        # 미정의 문자
+        cells.append([0]*6)
         i += 1
-    return braille_cells
-
-def sanitize_filename(text):
-    import re
-    filename = re.sub(r'[^가-힣a-zA-Z0-9]', '_', text)
-    filename = filename.strip('_')
-    if not filename:
-        filename = "braille"
-    return filename[:30] + "_dot.png"
+    return cells
 
 def draw_braille_cell(img, x0, y0, pattern, point_r, xgap, ygap, dot_color=(0,0,0)):
-    coords = [
-        (0, 0), (0, 1), (0, 2),
-        (1, 0), (1, 1), (1, 2)
-    ]
+    coords = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
     for idx, dot in enumerate(pattern):
         if dot:
             dx, dy = coords[idx]
@@ -104,40 +105,40 @@ def make_braille_image(
         save_path=None
     ):
     mm2px = lambda mm: int(round(mm * dpi / 25.4))
-    point_d_mm = 1.5
-    point_r_px = max(mm2px(point_d_mm) // 2, 2)
-    xgap_px   = mm2px(2.5)
-    ygap_px   = mm2px(2.5)
-    cell_x_px = mm2px(6.0)
-    cell_y_px = mm2px(10.0)
-
-    braille_cells = parse_to_braille_cells(text)
-    ncell = len(braille_cells)
-    nrow = (ncell + max_cols - 1) // max_cols
-    ncol = min(ncell, max_cols)
-
-    img_w = cell_x_px * ncol
-    img_h = cell_y_px * nrow
-    img = np.ones((img_h, img_w, 3), dtype=np.uint8) * 255
-
-    for k, pattern in enumerate(braille_cells):
-        row = k // max_cols
-        col = k % max_cols
-        x0 = cell_x_px * col + cell_x_px // 2 - xgap_px // 2
-        y0 = cell_y_px * row + cell_y_px // 2 - ygap_px
-        draw_braille_cell(img, x0, y0, pattern, point_r_px, xgap_px, ygap_px, dot_color=(0,0,0))
-
-    if not save_path:
-        save_path = sanitize_filename(text)
-    cv2.imwrite(save_path, img)
-    print(f"이미지를 파일로 저장했습니다: {save_path}")
-    return img
+    point_r = max(mm2px(1.5) // 2, 2)
+    xgap = mm2px(2.5)
+    ygap = mm2px(2.5)
+    cell_w = mm2px(6.0)
+    cell_h = mm2px(10.0)
+    cells = parse_to_braille_cells(text)
+    ncol = min(len(cells), max_cols)
+    nrow = (len(cells) + max_cols - 1) // max_cols
+    img = np.ones((cell_h * nrow, cell_w * ncol, 3), dtype=np.uint8) * 255
+    for i, pattern in enumerate(cells):
+        row, col = divmod(i, max_cols)
+        x0 = col * cell_w + cell_w // 2 - xgap // 2
+        y0 = row * cell_h + cell_h // 2 - ygap
+        draw_braille_cell(img, x0, y0, pattern, point_r, xgap, ygap)
+    filename = sanitize_filename(text) if not save_path else save_path
+    cv2.imwrite(filename, img)
+    return filename, len(cells)
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    text = input('한글/영문/숫자/축약어 입력: ')
-    img = make_braille_image(text, dpi=300, max_cols=20)
-    plt.imshow(img)
+    import platform
+    text = input('한글/영문/숫자/특수/축약 입력: ')
+    path, cell_count = make_braille_image(text)
+    img = cv2.imread(path)
+    # 한글 폰트 설정(플랫폼별)
+    if platform.system() == 'Darwin':
+        plt.rcParams['font.family'] = 'AppleGothic'
+    elif platform.system() == 'Windows':
+        plt.rcParams['font.family'] = 'Malgun Gothic'
+    else:
+        plt.rcParams['font.family'] = 'NanumGothic'
+    plt.rcParams['axes.unicode_minus'] = False
+    plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     plt.axis('off')
     plt.title(f"Braille: {text}")
     plt.show()
+    print(f"[✔] 점자 이미지 저장 ({path}), 셀 개수: {cell_count}")
