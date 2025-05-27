@@ -61,5 +61,6 @@ def api_braille_image_to_text():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
-    # Render 등에서는 보통 host/port 지정 없이 실행하면 됨
-    app.run()
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
