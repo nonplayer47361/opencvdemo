@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>점자 변환/복원 데모</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 2em auto; }
+    .section { border: 1px solid #ccc; padding: 1em; margin-bottom: 2em; }
+    input, textarea { width: 100%; }
+    img { max-width: 100%; background: #eee; margin-top: .5em; }
+  </style>
+</head>
+<body>
+  <h1>점자 변환 및 복원 데모</h1>
+  <div class="section">
+    <h2>1. 텍스트 → 점자 이미지 변환</h2>
+    <textarea id="textInput1" rows="2" placeholder="한글/영문/숫자/특수/축약 입력"></textarea>
+    <button onclick="convertToBrailleImage()">이미지로 변환</button>
+    <div id="brailleImageResult"></div>
+  </div>
+
+  <div class="section">
+    <h2>2. 텍스트 → 점자 유니코드 변환</h2>
+    <textarea id="textInput2" rows="2" placeholder="한글/영문/숫자/특수/축약 입력"></textarea>
+    <button onclick="convertToBrailleUnicode()">유니코드로 변환</button>
+    <div id="brailleUnicodeResult" style="font-size:2em;"></div>
+  </div>
+
+  <div class="section">
+    <h2>3. 점자 이미지 → 텍스트 복원</h2>
+    <form id="brailleImageForm">
+      <input type="file" id="brailleImageInput" accept="image/*" required>
+      <button type="submit">복원</button>
+    </form>
+    <div id="restoreResult"></div>
+  </div>
+
+<script>
+function convertToBrailleImage() {
+  const text = document.getElementById("textInput1").value;
+  if (!text) return alert("텍스트를 입력하세요.");
+  fetch("/api/text-to-braille-image", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({text})
+  }).then(res => {
+    if (!res.ok) return res.json().then(d => { throw d.error; });
+    return res.blob();
+  }).then(blob => {
+    const url = URL.createObjectURL(blob);
+    document.getElementById("brailleImageResult").innerHTML =
+      `<img src="${url}" alt="braille image">`;
+  }).catch(err => alert("에러: "+err));
+}
+
+function convertToBrailleUnicode() {
+  const text = document.getElementById("textInput2").value;
+  if (!text) return alert("텍스트를 입력하세요.");
+  fetch("/api/text-to-braille-unicode", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({text})
+  })
+  .then(res => res.json())
+  .then(data => {
+    document.getElementById("brailleUnicodeResult").innerText = data.braille_unicode || data.error;
+  });
+}
+
+document.getElementById('brailleImageForm').onsubmit = async function(e) {
+  e.preventDefault();
+  const file = document.getElementById('brailleImageInput').files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch('/api/braille-image-to-text', {
+    method: 'POST',
+    body: formData
+  });
+  const data = await res.json();
+  document.getElementById('restoreResult').innerText = data.text ? `복원 결과: ${data.text}` : `오류: ${data.error}`;
+};
+</script>
+</body>
+</html>
