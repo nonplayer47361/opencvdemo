@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 import os
 from braille.braille_converter import make_braille_image, text_to_braille, decode_braille_image
 from werkzeug.utils import secure_filename
@@ -7,6 +7,14 @@ app = Flask(__name__)
 UPLOAD_FOLDER = './uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# 루트 health check 및 index.html 제공
+@app.route("/", methods=["GET"])
+def root():
+    # index.html이 같은 디렉토리에 있을 경우
+    if os.path.exists("index.html"):
+        return send_from_directory(".", "index.html")
+    return "Braille Web Demo is running!"
 
 @app.route("/api/text-to-braille-image", methods=["POST"])
 def api_text_to_braille_image():
@@ -53,4 +61,5 @@ def api_braille_image_to_text():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Render 등에서는 보통 host/port 지정 없이 실행하면 됨
+    app.run()
